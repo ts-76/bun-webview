@@ -1,6 +1,6 @@
 ---
 name: bun-webview
-description: Browser automation using Bun.WebView — Bun's built-in headless browser API. Use when the user needs to scrape web pages, automate authenticated sites, fill forms, extract DOM content, take screenshots, or run JavaScript in a browser context. Bun.WebView is a JavaScript API executed via `bun -e "..."` — not a CLI tool. Prefer this when Bun is available and the task involves authenticated browser sessions or DOM manipulation.
+description: Browser automation using Bun.WebView — Bun's built-in headless browser API. Use when the user needs to scrape web pages, automate authenticated sites, fill forms, extract DOM content, take screenshots, or run JavaScript in a browser context. Bun.WebView is a JavaScript API executed via `bun -e "..."` — not a CLI tool. Prefer this when Bun is available and the task involves authenticated browser sessions or DOM manipulation. With Chrome, assume an already-open Chrome CDP session and reuse it; never repeatedly launch fresh Chrome sessions.
 ---
 
 # Bun.WebView
@@ -9,7 +9,29 @@ Bun v1.3.12+ ships native headless browser automation as a built-in API.
 
 **Two backends, one API:**
 - **WebKit** (macOS default) — zero dependencies, uses system WKWebView. No existing sessions.
-- **Chrome** — connects to system Chrome via CDP. Inherits the default profile including cookies and existing logins.
+- **Chrome** — connects to an already-running system Chrome via CDP. Inherits the open Chrome session, including cookies and existing logins.
+
+## Chrome Session Reuse
+
+**Default to reusing the already-open Chrome session. Do not repeatedly open Chrome.**
+
+Before creating `new Bun.WebView({ backend: 'chrome' })`, verify that Chrome is already listening on the CDP port. If `http://127.0.0.1:9222/json/version` is unavailable, stop and tell the user Chrome needs to be opened once with `--remote-debugging-port=9222`; do not let Bun.WebView fall back to launching a fresh Chrome process.
+
+```bash
+bun -e "
+  const cdp = await fetch('http://127.0.0.1:9222/json/version').catch(() => null);
+  if (!cdp?.ok) {
+    console.error('Chrome CDP is not available on 127.0.0.1:9222. Open Chrome once with --remote-debugging-port=9222, then rerun.');
+    process.exit(1);
+  }
+
+  await using v = new Bun.WebView({ backend: 'chrome', width: 1400, height: 900 });
+  await v.navigate('https://example.com');
+  console.log(await v.evaluate('document.title'));
+"
+```
+
+Use one `bun -e` process for a complete automation task whenever practical. Creating a separate `bun -e` process per step reconnects to Chrome and opens extra tabs; batch navigation, DOM inspection, form filling, clicking, and screenshots in the same script.
 
 ## Execution
 
@@ -17,23 +39,29 @@ Bun.WebView is a **JavaScript API**, not a CLI. Always run with `bun -e`:
 
 ```bash
 bun -e "
+  const cdp = await fetch('http://127.0.0.1:9222/json/version').catch(() => null);
+  if (!cdp?.ok) process.exit(1);
+
   await using v = new Bun.WebView({ backend: 'chrome', width: 1400, height: 900 });
   await v.navigate('https://example.com');
   console.log(await v.evaluate('document.title'));
 "
 ```
 
-Use `bun -e` for all tasks — both quick inspections and multi-step automation. Use `await using` so the browser closes automatically when done.
+Use `bun -e` for all tasks — both quick inspections and multi-step automation. Use `await using` so the WebView/tab is disposed when done without closing the user's already-running Chrome session.
 
 ## Instance Reuse
 
-**Create one instance per `bun -e` session and reuse it for all operations.**
+**Create one instance per `bun -e` task and reuse it for all operations.**
 
 `v.navigate()` reuses the same tab — there is no need to create a new `Bun.WebView` per URL or per step. Creating multiple instances within the same session means launching (or re-attaching to) Chrome multiple times, which adds startup overhead and makes the task slower.
 
 ```bash
 # Correct — one instance, multiple navigations
 bun -e "
+  const cdp = await fetch('http://127.0.0.1:9222/json/version').catch(() => null);
+  if (!cdp?.ok) process.exit(1);
+
   await using v = new Bun.WebView({ backend: 'chrome', width: 1400, height: 900 });
 
   for (const url of ['https://example.com', 'https://bun.sh']) {
@@ -47,12 +75,19 @@ bun -e "
 # Wrong — new instance per URL (slow, unnecessary Chrome restarts)
 # await using v1 = new Bun.WebView(...); await v1.navigate('https://example.com'); ...
 # await using v2 = new Bun.WebView(...); await v2.navigate('https://bun.sh'); ...
+
+# Wrong — separate bun -e invocations per step (opens extra tabs / reconnects repeatedly)
+# bun -e "await using v = new Bun.WebView({ backend: 'chrome' }); await v.navigate(url1)"
+# bun -e "await using v = new Bun.WebView({ backend: 'chrome' }); await v.navigate(url2)"
 ```
 
 ## Session / Authentication
 
 ```bash
 bun -e "
+  const cdp = await fetch('http://127.0.0.1:9222/json/version').catch(() => null);
+  if (!cdp?.ok) process.exit(1);
+
   await using v = new Bun.WebView({ backend: 'chrome' });
   await v.navigate('https://app.example.com/dashboard');
   // Chrome profile cookies are inherited — no login needed
@@ -64,7 +99,7 @@ With `backend: 'chrome'`, behavior depends on whether Chrome is already running:
 | Chrome state | Bun.WebView behavior |
 |---|---|
 | Running with `--remote-debugging-port=9222` | Connects to the **existing process**, opens a new tab. All logins and open tabs are shared. No cold start. |
-| Running normally (no debug port) | Launches a **new Chrome process** using the default profile. Cookies are inherited but open tabs are not shared. Cold start applies. |
+| Running normally (no debug port) | May launch a **new Chrome process** using the default profile. Avoid this by running the CDP preflight before creating `Bun.WebView`. |
 
 When connected to a running Chrome, you can see and interact with all currently open tabs via `v.cdp("Target.getTargets", {})`. This is the same as agent-browser's `--auto-connect`.
 

@@ -2,6 +2,15 @@
 
 > Each snippet below shows a standalone example with its own `await using v = new Bun.WebView(...)`.
 > When combining multiple patterns in one `bun -e`, declare the instance **once at the top** and reuse `v` throughout — do not create a new instance per step.
+> For Chrome automation, run a CDP preflight before `new Bun.WebView({ backend: 'chrome' })` and reuse the already-open Chrome session. If `127.0.0.1:9222` is unavailable, stop instead of launching another Chrome process.
+
+```js
+const cdp = await fetch('http://127.0.0.1:9222/json/version').catch(() => null);
+if (!cdp?.ok) {
+  console.error('Chrome CDP is not available on 127.0.0.1:9222.');
+  process.exit(1);
+}
+```
 
 ## Check Auth / Detect Redirect
 

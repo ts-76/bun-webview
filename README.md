@@ -9,7 +9,7 @@ An agent skill for browser automation using **Bun.WebView** — Bun's built-in h
 | Backend | Description |
 |---|---|
 | `webkit` | macOS default. Uses system WKWebView. No existing sessions. |
-| `chrome` | Connects to system Chrome via CDP. Inherits the default profile including cookies and existing logins. |
+| `chrome` | Connects to an already-running system Chrome via CDP. Reuses the open Chrome session, including cookies and existing logins. |
 
 ## Skill Contents
 
@@ -29,6 +29,9 @@ This skill is intended to be loaded into an AI agent's skill system. Place the c
 
 ```bash
 bun -e "
+  const cdp = await fetch('http://127.0.0.1:9222/json/version').catch(() => null);
+  if (!cdp?.ok) process.exit(1);
+
   await using v = new Bun.WebView({ backend: 'chrome', width: 1400, height: 900 });
   await v.navigate('https://example.com');
   for (let i = 0; i < 15; i++) { await new Promise(r => setTimeout(r, 1000)); if (!v.loading) break; }
@@ -37,15 +40,15 @@ bun -e "
 "
 ```
 
-### Connecting to an existing Chrome session
+### Reusing an existing Chrome session
 
-To reuse your existing Chrome cookies and logins, launch Chrome with the remote debugging port before running Bun.WebView:
+To reuse your existing Chrome cookies, logins, and browser process, Chrome should already be running with the remote debugging port:
 
 ```bash
 open -a "Google Chrome" --args --remote-debugging-port=9222
 ```
 
-Then use `backend: 'chrome'` — Bun will connect to the running instance automatically.
+Then use `backend: 'chrome'` after checking `http://127.0.0.1:9222/json/version`. If the CDP endpoint is unavailable, stop and fix the Chrome session instead of letting Bun.WebView launch another Chrome process.
 
 ## Requirements
 

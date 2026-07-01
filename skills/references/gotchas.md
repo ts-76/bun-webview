@@ -3,8 +3,18 @@
 ## `backend: "chrome"` vs WebKit
 
 - **WebKit** (macOS default): launches a fresh browser with no existing sessions
-- **Chrome**: uses the system Chrome profile → cookies and logins are inherited
-- Use `backend: "chrome"` whenever authentication is needed
+- **Chrome**: connects to the already-running Chrome CDP session when Chrome is listening on `127.0.0.1:9222`
+- Use `backend: "chrome"` whenever authentication is needed, but run a CDP preflight before creating `Bun.WebView`
+
+```js
+const cdp = await fetch('http://127.0.0.1:9222/json/version').catch(() => null);
+if (!cdp?.ok) {
+  console.error('Chrome CDP is not available on 127.0.0.1:9222.');
+  process.exit(1);
+}
+```
+
+If Chrome is only running normally without `--remote-debugging-port=9222`, Bun.WebView may open a new Chrome process. Treat that as a setup problem, not as a reason to retry.
 
 ## No `headless: false`
 
@@ -62,9 +72,17 @@ bun -e "
 
 `v.scrollTo()` times out if the selector doesn't match a currently visible element. Verify selectors first with `v.evaluate()`.
 
-## One Chrome Instance Per Bun Process
+## Reuse the Open Chrome Session
 
-Multiple `new Bun.WebView()` calls within one `bun -e` share a single Chrome subprocess; each creates a new tab. Navigation calls in sequence all operate in that shared context.
+Use the already-open Chrome CDP session for browser automation. One `bun -e` process should create one `Bun.WebView` and perform the whole task through that instance.
+
+Avoid these patterns:
+
+- Running a separate `bun -e` command for each page or action
+- Creating multiple `new Bun.WebView({ backend: "chrome" })` instances for one task
+- Retrying after the CDP preflight fails, which can repeatedly open fresh Chrome processes
+
+`v.navigate()` reuses the same tab. Prefer sequential navigations in one script over opening new WebView instances.
 
 ## CDP Events Are Not Delivered (v1.3.12)
 
